@@ -23,6 +23,30 @@ app.get("/debug", (req, res) => res.json({ query: req.query }));
 
 // ГЛАВНЫЙ МАРШРУТ: проксируем alias в GAS
 app.get("/api/pull", async (req, res) => {
+  // Отправить текст файла на Gmail через GAS (push-канал)
+app.get("/api/pushmail", async (req, res) => {
+  try {
+    const alias = (req.query.alias || req.query.a || "").toString().trim();
+    if (!alias) return res.status(400).json({ error: "alias is required" });
+
+    const url =
+      `${GOOGLE_BRIDGE_URL}?action=pushtogmail` +
+      `&alias=${encodeURIComponent(alias)}` +
+      `&token=${encodeURIComponent(TOKEN)}`;
+
+    const r = await fetch(url);
+    const data = await r.json().catch(() => ({}));
+
+    if (!r.ok || !data?.ok) {
+      return res.status(502).json({ error: "bridge failed", status: r.status, source: data });
+    }
+    // GAS отправляет письмо самому владельцу скрипта — тебе
+    return res.json({ ok: true, alias, status: "sent_to_gmail" });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
   try {
     const alias = (req.query.alias || req.query.a || "").toString().trim();
     if (!alias) return res.status(400).json({ error: "alias is required" });
