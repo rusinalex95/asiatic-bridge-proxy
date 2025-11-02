@@ -4,39 +4,48 @@ import fetch from "node-fetch";
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Настройки
+// === НАСТРОЙКИ (у тебя они уже валидны) ===
 const GOOGLE_BRIDGE_URL = "https://script.google.com/macros/s/AKfycbzgOoP-bDBDWGEvHLWDBaeItHiM1EUwX7dxpiQOlGiqyG3d2q6wyv35JbxoWMz4WMyDUw/exec";
 const TOKEN = "asiaticbridge_artur";
 
-// CORS — разрешаем ChatGPT
+// CORS
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET");
   next();
 });
 
-// Универсальный endpoint
+// Пинг
+app.get("/health", (_, res) => res.json({ ok: true }));
+
+// Эхо для быстрой диагностики
+app.get("/debug", (req, res) => res.json({ query: req.query }));
+
+// ГЛАВНЫЙ МАРШРУТ: проксируем alias в GAS
 app.get("/api/pull", async (req, res) => {
   try {
-    const alias = req.query.alias?.toLowerCase();
+    const alias = (req.query.alias || req.query.a || "").toString().trim();
     if (!alias) return res.status(400).json({ error: "alias is required" });
 
-    const url = `${GOOGLE_BRIDGE_URL}?action=fileText&alias=${encodeURIComponent(alias)}&token=${TOKEN}`;
-    const response = await fetch(url);
-    const data = await response.json();
+    // Формируем запрос в твой GAS: передаём action, alias и token
+    const url =
+      `${GOOGLE_BRIDGE_URL}?action=fileText` +
+      `&alias=${encodeURIComponent(alias)}` +
+      `&token=${encodeURIComponent(TOKEN)}`;
 
-    if (!data?.ok) {
-      return res.status(500).json({ error: data?.error || "bridge failed", source: data });
+    const r = await fetch(url);
+    const data = await r.json().catch(() => ({}));
+
+    if (!r.ok || (!data.ok && !data.text && !data.data?.text)) {
+      return res.status(502).json({ error: "bridge failed", status: r.status, source: data });
     }
 
-    res.json({
-      alias,
-      name: data.data?.name,
-      text: data.data?.text || data.text
-    });
-
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    // Унифицируем ответ
+    const name = data?.data?.name ?? data?.name ?? null;
+    const text = data?.data?.text ?? data?.text ?? "";
+    return res.json({ alias, name, text });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || String(e) });
   }
 });
 
