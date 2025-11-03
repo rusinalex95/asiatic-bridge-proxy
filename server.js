@@ -1,3 +1,26 @@
+import fs from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
+
+async function loadRegistry() {
+  const p = path.join(__dirname, "registry.json");
+  const raw = await fs.readFile(p, "utf-8");
+  const cfg = JSON.parse(raw);
+
+  // Умный дефолт base: если в JSON нет — берём из запроса
+  if (!cfg.base) cfg.base = null;
+
+  // Быстрая валидация
+  if (!Array.isArray(cfg.audiences)) throw new Error("registry: audiences[] required");
+  cfg.audiences.forEach(a => {
+    if (!a.alias) throw new Error("registry: audience.alias required");
+  });
+  return cfg;
+}
+
 import express from "express";
 import fetch from "node-fetch";            // ок; в Node 18+ можно и глобальный fetch
 
@@ -139,40 +162,33 @@ const ALIASES = [
   "ца6","ца7","ца8","ца9","ца10","ца11","ца12"
 ];
 
-app.get("/api/registry", (req, res) => {
-  const base = "https://asiatic-bridge-proxy.onrender.com";
-  const filetext = (a) => `${base}/api/filetext?alias=${encodeURIComponent(a)}`;
-  const pushmail = (a) => `${base}/api/pushmail?alias=${encodeURIComponent(a)}`;
+app.get("/api/registry", async (req, res) => {
+  try {
+    const cfg = await loadRegistry();
 
-  // Можно хранить человекочитаемые названия (необязательно)
-  const names = {
-    "ца1": "Инвестор-прагматик",
-    "ца2": "Лайфстайл-релокант",
-    "ца3": "Luxury-эстет",
-    "ца4": "Пенсионер-инвестор",
-    "ца5": "Спекулятивный игрок",
-    "ца6": "Семейный покупатель",
-    "ца7": "Экспат с доходом",
-    "ца8": "IT-кочевник",
-    "ца9": "Микроинвестор",
-    "ца10":"Криптоинвестор",
-    "ца11":"Сентиментальный покупатель",
-    "ца12":"Приоритет доп. ЦА"
-  };
+    // base: из JSON, либо из запроса (удобно при смене домена/окружения)
+    const base = cfg.base || `${req.protocol}://${req.get("host")}`;
 
-  res.json({
-    project: "Asiatic Bridge",
-    base,
-    endpoints: {
-      filetext: `${base}/api/filetext?alias=`,
-      pushmail: `${base}/api/pushmail?alias=`,
-      debug:    `${base}/api/debug-bridge?`
-    },
-    audiences: ALIASES.map(a => ({
-      alias: a,
-      name: names[a] || a,
-      pull_url: filetext(a),
-      push_url: pushmail(a)
-    }))
-  });
+    const filetext = (a) => `${base}/api/filetext?alias=${encodeURIComponent(a)}`;
+    const pushmail = (a) => `${base}/api/pushmail?alias=${encodeURIComponent(a)}`;
+
+    res.json({
+      project: cfg.project || "Asiatic Bridge",
+      base,
+      endpoints: {
+        filetext: `${base}/api/filetext?alias=`,
+        pushmail: `${base}/api/pushmail?alias=`,
+        debug:    `${base}/api/debug-bridge?`
+      },
+      audiences: cfg.audiences.map(a => ({
+        alias: a.alias,
+        name: a.name || a.alias,
+        // можно в будущем добавлять сюда и fileId, если решишь хранить их в JSON
+        pull_url: filetext(a.alias),
+        push_url: pushmail(a.alias)
+      }))
+    });
+  } catch (e) {
+    res.status(500).json({ error: "registry_load_error", details: e.message });
+  }
 });
