@@ -6,9 +6,8 @@
   "engines": { "node": ">=18.x" },
   "dependencies": {
     "express": "^4.19.2",
-    "node-fetch": "^3.3.2"
+    "node-fetch": "^3.3.2",
+    "express-rate-limit": "^7.1.5"
   },
-  "scripts": {
-    "start": "node server.js"
-  }
+  "scripts": { "start": "node server.js" }
 }
