@@ -24,6 +24,31 @@ app.get("/", (_req, res) => res.send("OK"));
 // Эхо
 app.get("/debug", (req, res) => res.json({ query: req.query }));
 
+// 1) Диагностический проксирующий маршрут
+app.get("/api/debug-bridge", async (req, res) => {
+  try {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(req.query)) params.set(k, String(v));
+    if (!params.has("token")) params.set("token", TOKEN);
+
+    const url = `${GOOGLE_BRIDGE_URL}?${params.toString()}`;
+    const r = await fetch(url);
+    const ct = r.headers.get("content-type") || "";
+    const text = await r.text();
+
+    return res.status(200).json({
+      ok: true,
+      bridge_url: url,
+      status: r.status,
+      contentType: ct,
+      // покажем кусочек тела, чтобы увидеть, что там за HTML/ошибка
+      bodyPreview: text.slice(0, 500)
+    });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
 // PULL: отдать текст по alias через GAS
 app.get("/api/pull", async (req, res) => {
   try {
@@ -85,15 +110,69 @@ app.get("/api/filetext", async (req, res) => {
     if (id) params.set("id", id);
     params.set("token", TOKEN);
 
-    const r = await fetch(`${GOOGLE_BRIDGE_URL}?${params.toString()}`);
+    const r = await fetch(`${GOOGLE_BRIDGE_URL}?${params.toString()}`, {
+      headers: { "Accept": "application/json" }
+    });
+
+    const ct = r.headers.get("content-type") || "";
+    // Если пришёл не JSON — вернём диагностическую информацию, а не SyntaxError
+    if (!ct.includes("application/json")) {
+      const html = await r.text();
+      return res.status(502).json({
+        error: "bridge_html",
+        status: r.status,
+        contentType: ct,
+        bodyPreview: html.slice(0, 500)
+      });
+    }
+
     const j = await r.json();
-    return res.status(200).json(j);
+    return res.status(r.ok ? 200 : 502).json(j);
   } catch (err) {
-    console.error(err);
     return res.status(500).json({ error: "proxy_error", details: String(err) });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Bridge proxy running on port ${PORT}`);
+// Список твоих алиасов — поддерживаешь вручную тут, когда появятся новые
+const ALIASES = [
+  "ца1","ца2","ца3","ца4","ца5",
+  "ца6","ца7","ца8","ца9","ца10","ца11","ца12"
+];
+
+app.get("/api/registry", (req, res) => {
+  const base = "https://asiatic-bridge-proxy.onrender.com";
+  const filetext = (a) => `${base}/api/filetext?alias=${encodeURIComponent(a)}`;
+  const pushmail = (a) => `${base}/api/pushmail?alias=${encodeURIComponent(a)}`;
+
+  // Можно хранить человекочитаемые названия (необязательно)
+  const names = {
+    "ца1": "Инвестор-прагматик",
+    "ца2": "Лайфстайл-релокант",
+    "ца3": "Luxury-эстет",
+    "ца4": "Пенсионер-инвестор",
+    "ца5": "Спекулятивный игрок",
+    "ца6": "Семейный покупатель",
+    "ца7": "Экспат с доходом",
+    "ца8": "IT-кочевник",
+    "ца9": "Микроинвестор",
+    "ца10":"Криптоинвестор",
+    "ца11":"Сентиментальный покупатель",
+    "ца12":"Приоритет доп. ЦА"
+  };
+
+  res.json({
+    project: "Asiatic Bridge",
+    base,
+    endpoints: {
+      filetext: `${base}/api/filetext?alias=`,
+      pushmail: `${base}/api/pushmail?alias=`,
+      debug:    `${base}/api/debug-bridge?`
+    },
+    audiences: ALIASES.map(a => ({
+      alias: a,
+      name: names[a] || a,
+      pull_url: filetext(a),
+      push_url: pushmail(a)
+    }))
+  });
 });
