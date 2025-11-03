@@ -73,4 +73,25 @@ app.get("/api/pushmail", async (req, res) => {
   }
 });
 
+// === Новый маршрут для filetext ===
+app.get("/api/filetext", async (req, res) => {
+  try {
+    const { alias, id } = req.query;
+    if (!alias && !id) return res.status(400).json({ error: "alias or id is required" });
+
+    const params = new URLSearchParams();
+    params.set("action", "filetext");
+    if (alias) params.set("alias", alias);
+    if (id) params.set("id", id);
+    params.set("token", TOKEN);
+
+    const r = await fetch(`${GOOGLE_BRIDGE_URL}?${params.toString()}`);
+    const j = await r.json();
+    res.status(200).json(j);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "proxy_error", details: String(err) });
+  }
+});
+
 app.listen(PORT, () => console.log(`Bridge proxy running on port ${PORT}`));
