@@ -1,29 +1,56 @@
 import express from "express";
-import fetch from "node-fetch";
+import fetch from "node-fetch";            // ок; в Node 18+ можно и глобальный fetch
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// === НАСТРОЙКИ (у тебя они уже валидны) ===
+// === НАСТРОЙКИ ===
 const GOOGLE_BRIDGE_URL = "https://script.google.com/macros/s/AKfycbzgOoP-bDBDWGEvHLWDBaeItHiM1EUwX7dxpiQOlGiqyG3d2q6wyv35JbxoWMz4WMyDUw/exec";
 const TOKEN = "asiaticbridge_artur";
 
 // CORS
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
 
-// Пинг
-app.get("/health", (_, res) => res.json({ ok: true }));
+// Health/Root
+app.get("/health", (_req, res) => res.json({ ok: true, ts: Date.now() }));
+app.get("/", (_req, res) => res.send("OK"));
 
-// Эхо для быстрой диагностики
+// Эхо
 app.get("/debug", (req, res) => res.json({ query: req.query }));
 
-// ГЛАВНЫЙ МАРШРУТ: проксируем alias в GAS
+// PULL: отдать текст по alias через GAS
 app.get("/api/pull", async (req, res) => {
-  // Отправить текст файла на Gmail через GAS (push-канал)
+  try {
+    const alias = (req.query.alias || req.query.a || "").toString().trim();
+    if (!alias) return res.status(400).json({ error: "alias is required" });
+
+    const url =
+      `${GOOGLE_BRIDGE_URL}?action=fileText` +   // doGet() всё равно lowerCase → filetext
+      `&alias=${encodeURIComponent(alias)}` +
+      `&token=${encodeURIComponent(TOKEN)}`;
+
+    const r = await fetch(url);
+    const data = await r.json().catch(() => ({}));
+
+    if (!r.ok || (!data.ok && !data.text && !data.data?.text)) {
+      return res.status(502).json({ error: "bridge failed", status: r.status, source: data });
+    }
+
+    const name = data?.data?.name ?? data?.name ?? null;
+    const text = data?.data?.text ?? data?.text ?? "";
+    return res.json({ ok: true, alias, name, text });
+  } catch (e) {
+    return res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// PUSHMAIL: отправить содержимое документа себе на Gmail
 app.get("/api/pushmail", async (req, res) => {
   try {
     const alias = (req.query.alias || req.query.a || "").toString().trim();
@@ -40,40 +67,13 @@ app.get("/api/pushmail", async (req, res) => {
     if (!r.ok || !data?.ok) {
       return res.status(502).json({ error: "bridge failed", status: r.status, source: data });
     }
-    // GAS отправляет письмо самому владельцу скрипта — тебе
     return res.json({ ok: true, alias, status: "sent_to_gmail" });
   } catch (e) {
     return res.status(500).json({ error: e.message || String(e) });
   }
 });
 
-  try {
-    const alias = (req.query.alias || req.query.a || "").toString().trim();
-    if (!alias) return res.status(400).json({ error: "alias is required" });
-
-    // Формируем запрос в твой GAS: передаём action, alias и token
-    const url =
-      `${GOOGLE_BRIDGE_URL}?action=fileText` +
-      `&alias=${encodeURIComponent(alias)}` +
-      `&token=${encodeURIComponent(TOKEN)}`;
-
-    const r = await fetch(url);
-    const data = await r.json().catch(() => ({}));
-
-    if (!r.ok || (!data.ok && !data.text && !data.data?.text)) {
-      return res.status(502).json({ error: "bridge failed", status: r.status, source: data });
-    }
-
-    // Унифицируем ответ
-    const name = data?.data?.name ?? data?.name ?? null;
-    const text = data?.data?.text ?? data?.text ?? "";
-    return res.json({ alias, name, text });
-  } catch (e) {
-    return res.status(500).json({ error: e.message || String(e) });
-  }
-});
-
-// === Новый маршрут для filetext ===
+// FILETEXT: универсальный прокси (alias или id)
 app.get("/api/filetext", async (req, res) => {
   try {
     const { alias, id } = req.query;
@@ -87,11 +87,13 @@ app.get("/api/filetext", async (req, res) => {
 
     const r = await fetch(`${GOOGLE_BRIDGE_URL}?${params.toString()}`);
     const j = await r.json();
-    res.status(200).json(j);
+    return res.status(200).json(j);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "proxy_error", details: String(err) });
+    return res.status(500).json({ error: "proxy_error", details: String(err) });
   }
 });
 
-app.listen(PORT, () => console.log(`Bridge proxy running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Bridge proxy running on port ${PORT}`);
+});
