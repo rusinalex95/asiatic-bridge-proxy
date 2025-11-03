@@ -192,3 +192,8 @@ app.get("/api/registry", async (req, res) => {
     res.status(500).json({ error: "registry_load_error", details: e.message });
   }
 });
+// ...всё что у тебя выше остаётся как есть
+
+app.listen(PORT, () => {
+  console.log(`Bridge proxy running on port ${PORT}`);
+});
