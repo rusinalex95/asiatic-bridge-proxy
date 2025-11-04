@@ -17,7 +17,7 @@ const TOKEN             = process.env.GAS_TOKEN || "asiaticbridge_artur";
 const PROXY_KEY         = process.env.PROXY_KEY || "";
 
 const app  = express();
-const PORT = process.env.PORT || 8080;
+const  = process.env. || 8080;
 
 // ===== registry.json loader =====
 async function loadRegistry() {
@@ -239,6 +239,81 @@ app.get("/api/about", (_req, res) => {
 
 app.get("/api/version", (_req, res) => {
   res.json({ build: "abp-2025-11-04" });
+});
+
+// === /api/bundle — пакетное извлечение нескольких ЦА ===
+app.get("/api/bundle", async (req, res) => {
+  try {
+    let aliases = [];
+    const raw = (req.query.aliases || req.query.a || "").toString().trim();
+
+    if (!raw) {
+      return res.status(400).json({ error: "aliases required, e.g. ?aliases=ца1,ца2 or ?aliases=all" });
+    }
+
+    if (raw.toLowerCase() === "all") {
+      // берём список из registry.json
+      const cfg = await loadRegistry();
+      aliases = (cfg.audiences || []).map(a => a.alias).filter(Boolean);
+      if (!aliases.length) {
+        return res.status(404).json({ error: "registry has no audiences" });
+      }
+    } else {
+      aliases = raw.split(",").map(a => a.trim()).filter(Boolean);
+    }
+
+    // убираем дубли, сохраняем порядок
+    const seen = new Set();
+    aliases = aliases.filter(a => !seen.has(a) && seen.add(a));
+
+    const results = [];
+
+    for (const alias of aliases) {
+      const cacheKey = `bundle:${alias}`;
+      const cached = getCache(cacheKey);
+      if (cached) {
+        results.push({ alias, cached: true, ...cached });
+        continue;
+      }
+
+      const params = new URLSearchParams({
+        action: "filetext",
+        alias,
+        token: TOKEN
+      });
+
+      const url = `${GOOGLE_BRIDGE_URL}?${params.toString()}`;
+      const r = await fetch(url);
+      const j = await r.json().catch(() => ({}));
+
+      if (!r.ok || (!j.ok && !j.text && !j.data?.text)) {
+        results.push({
+          alias,
+          error: true,
+          status: r.status,
+          reason: j.error || "bridge failed"
+        });
+        continue;
+      }
+
+      const name = j?.data?.name ?? j?.name ?? alias;
+      const text = j?.data?.text ?? j?.text ?? "";
+      const item = { ok: true, alias, name, text };
+
+      setCache(cacheKey, item);
+      results.push(item);
+    }
+
+    res.json({
+      ok: true,
+      total: results.length,
+      loaded: results.filter(x => x.ok).length,
+      aliases,
+      results
+    });
+  } catch (err) {
+    res.status(500).json({ error: "bundle_error", details: String(err) });
+  }
 });
 
 app.listen(PORT, () => {
