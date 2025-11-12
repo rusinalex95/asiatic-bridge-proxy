@@ -17,7 +17,7 @@ const TOKEN             = process.env.GAS_TOKEN || "asiaticbridge_artur";
 const PROXY_KEY         = process.env.PROXY_KEY || "";
 
 const app  = express();
-const  = process.env. || 8080;
+const PORT = process.env.PORT || 8080;
 
 // ===== registry.json loader =====
 async function loadRegistry() {
@@ -47,7 +47,7 @@ app.use(rateLimit({
 // ===== CORS =====
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-proxy-key");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
@@ -55,6 +55,32 @@ app.use((req, res, next) => {
 
 // ===== health/root =====
 app.get("/health", (_req, res) => res.json({ ok: true, ts: Date.now() }));
+// ===== deep status (проверяет зависимость GAS, но НЕ влияет на /health) =====
+app.get("/status", async (_req, res) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const url = `${GOOGLE_BRIDGE_URL}?action=ping&token=${encodeURIComponent(TOKEN)}`;
+    const r   = await fetch(url, { signal: controller.signal });
+    const txt = await r.text();
+
+    clearTimeout(timer);
+    return res
+      .status(r.ok ? 200 : 502)
+      .json({
+        ok: r.ok,
+        deps: { gas_ping: r.ok ? "up" : "down" },
+        status: r.status,
+        sample: txt.slice(0, 200)
+      });
+  } catch (e) {
+    clearTimeout(timer);
+    return res
+      .status(502)
+      .json({ ok: false, deps: { gas_ping: "down" }, error: String(e) });
+  }
+});
 app.get("/",       (_req, res) => res.send("OK"));
 
 // ===== мини-кэш на 120 сек =====
@@ -197,7 +223,10 @@ app.get("/api/filetext", async (req, res) => {
 app.get("/api/registry", async (req, res) => {
   try {
     const cfg  = await loadRegistry();
-    const base = cfg.base || `${req.protocol}://${req.get("host")}`;
+    const host  = req.get("x-forwarded-host") || req.get("host");
+    const proto = req.get("x-forwarded-proto") || req.protocol;
+    const base  = cfg.base || `${proto}://${host}`;
+
 
     const filetext = (a) => `${base}/api/filetext?alias=${encodeURIComponent(a)}`;
     const pushmail = (a) => `${base}/api/pushmail?alias=${encodeURIComponent(a)}`;
@@ -233,7 +262,7 @@ app.get("/api/about", (_req, res) => {
       PROXY_KEY: !!process.env.PROXY_KEY
     },
     uptime_s: Math.round(process.uptime()),
-    routes: ["/health","/","/api/registry","/api/filetext","/api/pull","/api/pushmail","/api/debug-bridge","/api/cache/flush","/api/about"]
+    routes: ["/","/health","/status","/api/registry","/api/filetext","/api/pull","/api/pushmail","/api/debug-bridge","/api/cache/flush","/api/about"]
   });
 });
 
