@@ -194,7 +194,7 @@ app.get("/api/filetext", async (req, res) => {
     if (cached) return res.status(200).json(cached);
 
     const params = new URLSearchParams();
-    params.set("action", "filetext");
+    params.set("action", "fileText");
     if (alias) params.set("alias", alias);
     if (id)    params.set("id", id);
     params.set("token", TOKEN);
@@ -306,7 +306,7 @@ app.get("/api/bundle", async (req, res) => {
       }
 
       const params = new URLSearchParams({
-        action: "filetext",
+        action: "fileText",
         alias,
         token: TOKEN
       });
